@@ -90,29 +90,61 @@ GROUP BY n.ntaname, n.boroname
 
 SELECT
     n.ntaname, n.boroname, COUNT(*) AS hydrant_count,
-ROUND((ST_Area(ST_Transform(n.wkb_geometry, 32118)) / 1000000)::numeric, 2) AS area_km2
+ROUND((ST_Area(ST_Transform(n.wkb_geometry, 32118)) / 1000000)::numeric, 2) AS area_km2,
+ROUND(COUNT(*) / (ST_Area(ST_Transform(n.wkb_geometry, 32118)) / 1000000)::numeric ,2) AS hydrants_per_km2
 FROM nyc_neighborhoods n
 JOIN nyc_hydrants h ON ST_Contains(n.wkb_geometry, h.wkb_geometry)
 WHERE n.boroname = 'Manhattan'
 GROUP BY n.ntaname, n.boroname, n.wkb_geometry
 
--- Expected: 38 Rows - Manhattan neighborhoods with hydrant_count and area_km2
+-- Expected: 38 Rows - Manhattan neighborhoods with hydrant_count, area_km2 and hydrant_density_km2
 
---           ntaname                | boroname  | hydrant_count | area_km2
--- --------------------------------+-----------+---------------+----------
---  Central Park                   | Manhattan |            63 |     3.56
---  Inwood Hill Park               | Manhattan |            14 |     0.93
---  Highbridge Park                | Manhattan |            32 |     0.72
---  United Nations                 | Manhattan |            17 |     0.10
---  East Harlem (North)            | Manhattan |           583 |     2.43
-
+--           ntaname                | boroname  | hydrant_count | area_km2 | hydrants_per_km2
+-- --------------------------------+-----------+---------------+----------+------------------
+--  Central Park                   | Manhattan |            63 |     3.56 |             17.7
+--  Inwood Hill Park               | Manhattan |            14 |     0.93 |            15.06
+--  Highbridge Park                | Manhattan |            32 |     0.72 |            44.42
+--  United Nations                 | Manhattan |            17 |     0.10 |           167.68
+--  East Harlem (North)            | Manhattan |           583 |     2.43 |           240.26
 
 -- =========================================================================
 -- QUERY 5: Compute the percent of each neighborhood within 100 meters of a hydrant (coverage analysis).
--- New Concept: Buffer + Union + Intersection
---
+-- New Concept(s): Buffer + Union + Intersection
+-- Buffer draws a  100m circle around each hydrant
+-- Union dissolves all the overlapping circles into a single shape per neighborhood
+-- Intersection cuts the merged buffer shape down to only the part that falls inside the neighborhood polygon
+-- 
 -- =========================================================================
 
+WITH coverage AS (
+    SELECT
+        n.ntaname,
+        n.boroname,
+        n.wkb_geometry AS nbhd_geom,
+        ST_Union(ST_Buffer(h.wkb_geometry::geography, 100)::geometry) AS covered_geom
+    FROM nyc_neighborhoods n
+    JOIN nyc_hydrants h ON ST_Contains(n.wkb_geometry, h.wkb_geometry)
+    WHERE n.boroname = 'Manhattan'
+    GROUP BY n.ntaname, n.boroname, n.wkb_geometry
+)
+
+SELECT
+    ntaname,
+    boroname,
+    ROUND(
+        (ST_Area(ST_Intersection(covered_geom, nbhd_geom)::geography) /
+         ST_Area(nbhd_geom::geography) * 100)::numeric
+    , 1) AS pct_covered
+FROM coverage
+ORDER BY pct_covered DESC;
+
+--                ntaname               | boroname  | pct_covered
+-- -------------------------------------+-----------+-------------
+--  Midtown-Times Square                | Manhattan |       100.0
+--  Midtown South-Flatiron-Union Square | Manhattan |        99.9
+--  East Harlem (South)                 | Manhattan |        99.8
+--  Chinatown-Two Bridges               | Manhattan |        99.5
+--  SoHo-Little Italy-Hudson Square     | Manhattan |        99.1
 
 
 
@@ -133,3 +165,4 @@ Actually converts the coordinates to a different CRS (e.g. 32118)
 The new coordinates are in meters on a flat plane
 ST_Area then does simple flat 2D math — fast and straightforward
 More control over which projection you use (important if accuracy for a specific region matters)
+
