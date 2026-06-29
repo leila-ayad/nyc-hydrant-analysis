@@ -166,3 +166,4 @@ The new coordinates are in meters on a flat plane
 ST_Area then does simple flat 2D math — fast and straightforward
 More control over which projection you use (important if accuracy for a specific region matters)
 
+CTE - common table expression - a named temp result set that I define at the top of a query then use as a table in a separate query below it (WITH coverage AS ) 
